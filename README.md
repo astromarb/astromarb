@@ -1,4 +1,4 @@
-I’m a Masters student intersted in the intersection of physics, geoscience, and computer science. Currently a physics and volcanology student in Nashville, TN. 
+I’m a Masters student at the intersection of physics, geoscience, and computer science. Currently a physics and volcanology student in Nashville, TN. 
 
 - 📫 marvinlopezacevedo.personal@gmail.com
 

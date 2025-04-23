@@ -1,8 +1,6 @@
-- 👋 Hi, I’m @astromarb
-- 👀 I’m interested in the intersection of physics, geoscience, and computer science. 
-- 🌱 I’m currently stuyding physics and volcanology in Nashville, TN
+I’m a Masters student intersted in the intersection of physics, geoscience, and computer science. Currently a physics and volcanology student in Nashville, TN. 
+
 - 📫 marvinlopezacevedo.personal@gmail.com
-- 😄 Pronouns: he/him
 
 <!---
 astromarb/astromarb is a ✨ special ✨ repository because its `README.md` (this file) appears on your GitHub profile.

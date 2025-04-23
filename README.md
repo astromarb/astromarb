@@ -1,6 +1,6 @@
-I’m a Masters student at the intersection of physics, geoscience, and computer science. Currently a physics and volcanology student in Nashville, TN. 
+I’m a Masters student at the intersection of physics, geoscience, and computer science. 
 
-- 📫 marvinlopezacevedo.personal@gmail.com
+Currently pursuing thermodynamic modeling of Cretaceous, highly differentiated silicic magma/mush/melt. 
 
 <!---
 astromarb/astromarb is a ✨ special ✨ repository because its `README.md` (this file) appears on your GitHub profile.

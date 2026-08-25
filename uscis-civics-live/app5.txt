@@ -1,0 +1,86 @@
+ const saveAll=async()=>{S.testDate=document.getElementById('testDate').value;S.minStudy=Math.max(1,Math.min(128,parseInt(document.getElementById('minStudy').value)||10));document.querySelectorAll('[data-dyn]').forEach(i=>{if(i.value.trim())S.dynamicAnswers[i.dataset.dyn]=i.value.trim();else delete S.dynamicAnswers[i.dataset.dyn]});const {error}=await supabase.from('user_settings').upsert({user_id:currentUser.id,test_date:S.testDate||null,daily_study_requirement:S.minStudy,dynamic_answers:S.dynamicAnswers,theme_preference:S.theme||'dark',updated_at:new Date().toISOString()},{onConflict:'user_id'});if(error){console.error(error);setSync('Sync error',true);return false}setSync('Synced');return true};
+ document.getElementById('saveSettings').onclick=async()=>{if(await saveAll())nav('home')};document.getElementById('saveDyn').onclick=async()=>{const msg=document.getElementById('dynSaveMsg');if(await saveAll()){msg.textContent='Saved ✓';msg.classList.add('show');clearTimeout(msg._hideTimer);msg._hideTimer=setTimeout(()=>msg.classList.remove('show'),1800)}};
+}
+function render(v){({home:renderHome,practice:renderPractice,quiz:renderQuiz,weak:renderWeak,sessions:renderSessions,settings:renderSettings}[v])()}
+function updateThemeButtons(mode){
+  for(const id of ['themeToggle','authThemeToggle']){
+    const btn=document.getElementById(id);if(!btn)continue;
+    const label=mode==='dark'?'Switch to light mode':'Switch to dark mode';
+    btn.setAttribute('aria-label',label);btn.title=label;
+  }
+}
+function applyTheme(mode,animate=true){
+  const next=mode==='light'?'light':'dark';
+  const root=document.documentElement;
+  const swap=()=>{root.dataset.fieldMode=next;S.theme=next;try{localStorage.setItem('uscis-civics-theme',next)}catch{}updateThemeButtons(next)};
+  if(!animate||window.matchMedia('(prefers-reduced-motion: reduce)').matches){swap();return}
+  root.classList.add('theme-animating');
+  requestAnimationFrame(()=>{swap();setTimeout(()=>root.classList.remove('theme-animating'),380)});
+}
+async function persistTheme(){
+  if(!currentUser)return;
+  const {error}=await supabase.from('user_settings').upsert({user_id:currentUser.id,theme_preference:S.theme||'dark',daily_study_requirement:S.minStudy||10,dynamic_answers:S.dynamicAnswers||{},test_date:S.testDate||null,updated_at:new Date().toISOString()},{onConflict:'user_id'});
+  if(error){console.error(error);setSync('Sync error',true)}else setSync('Synced')
+}
+let enteringUserId=null;
+async function showApp(user){
+  if(!user)return showLogin();
+  if(enteringUserId===user.id&&currentUser?.id===user.id)return;
+  enteringUserId=user.id;
+  currentUser=user;
+  document.getElementById('authGate').classList.add('hidden');
+  document.getElementById('appShell').classList.remove('hidden');
+  document.getElementById('userEmail').textContent=user.email||'Signed in';
+  setSync('Syncing…');
+  try{
+    const {error:profileError}=await supabase.from('profiles').upsert({id:user.id,display_name:user.email?.split('@')[0]||null},{onConflict:'id'});
+    if(profileError)console.warn('Profile sync:',profileError.message);
+    await loadRemoteState();
+    applyTheme(S.theme||'dark',false);
+    renderHome();
+  }catch(err){
+    console.error('App initialization failed:',err);
+    setSync('Sync error',true);
+    renderHome();
+  }finally{
+    enteringUserId=null;
+  }
+}
+function showLogin(){
+  currentUser=null;currentSessionId=null;enteringUserId=null;S=base();
+  document.getElementById('appShell').classList.add('hidden');
+  document.getElementById('authGate').classList.remove('hidden');
+  let pref='dark';try{pref=localStorage.getItem('uscis-civics-theme')||'dark'}catch{}
+  applyTheme(pref,false);
+}
+document.getElementById('loginForm').addEventListener('submit',async e=>{
+  e.preventDefault();
+  const msg=document.getElementById('loginMsg');
+  const submit=e.currentTarget.querySelector('button[type="submit"]');
+  submit.disabled=true;msg.textContent='Signing in…';msg.className='small muted';
+  try{
+    const {data,error}=await supabase.auth.signInWithPassword({email:document.getElementById('loginEmail').value.trim(),password:document.getElementById('loginPassword').value});
+    if(error){msg.textContent=error.message;msg.className='small badtxt';return}
+    msg.textContent='Signed in. Loading your study data…';msg.className='small goodtxt';
+    if(data?.user)await showApp(data.user);
+  }catch(err){msg.textContent='Could not finish signing in. Please try again.';msg.className='small badtxt';console.error(err)}
+  finally{submit.disabled=false}
+});
+for(const id of ['themeToggle','authThemeToggle']){
+  const b=document.getElementById(id);if(b)b.addEventListener('click',()=>{
+    const next=(S.theme||document.documentElement.dataset.fieldMode||'dark')==='dark'?'light':'dark';
+    applyTheme(next,true);setTimeout(persistTheme,420);
+  });
+}
+document.getElementById('logoutBtn').addEventListener('click',async()=>{await supabase.auth.signOut();showLogin()});
+supabase.auth.onAuthStateChange((event,session)=>{
+  if(event==='SIGNED_OUT'){showLogin();return}
+  if((event==='SIGNED_IN'||event==='TOKEN_REFRESHED'||event==='USER_UPDATED')&&session?.user&&currentUser?.id!==session.user.id){
+    queueMicrotask(()=>showApp(session.user));
+  }
+});
+let initialTheme='dark';try{initialTheme=localStorage.getItem('uscis-civics-theme')||'dark'}catch{}
+applyTheme(initialTheme,false);
+const {data:{session},error:sessionError}=await supabase.auth.getSession();
+if(sessionError)console.error('Session restore:',sessionError);
+if(session?.user)await showApp(session.user);else showLogin();

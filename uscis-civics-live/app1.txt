@@ -1,0 +1,70 @@
+import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.57.4/+esm";
+const BANK=globalThis.__CIVICS_BANK;
+const SUPABASE_URL='https://ruqxmmtvfspeazlwaypi.supabase.co';
+const SUPABASE_PUBLISHABLE_KEY='sb_publishable_OBJuOvhNVAnWCPLy2XcyVg_p17TcjI4';
+const supabase=createClient(SUPABASE_URL,SUPABASE_PUBLISHABLE_KEY);
+let currentUser=null;
+let currentSessionId=null;
+const today=()=>new Intl.DateTimeFormat('en-CA').format(new Date());
+const stamp=()=>new Date().toLocaleString();
+const esc=s=>String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+const norm=s=>String(s).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9\s]/g,' ').replace(/\s+/g,' ').trim();
+function base(){return {sessions:[],attempts:[],stats:{},studiedByDay:{},testDate:'',dynamicAnswers:{},minStudy:10,longFormResponses:[],theme:'dark'}}
+let S=base();
+function st(id){return S.stats[id]||(S.stats[id]={seen:0,correct:0,wrong:0})}
+function setSync(text,bad=false){const e=document.getElementById('syncBadge');if(e){e.textContent=text;e.className='badge '+(bad?'badtxt':'')}}
+async function loadRemoteState(){
+  if(!currentUser)return;
+  setSync('Syncing…');
+  const uid=currentUser.id;
+  const [settingsR,statsR,attemptsR,sessionsR,activityR,longR]=await Promise.all([
+    supabase.from('user_settings').select('*').eq('user_id',uid).maybeSingle(),
+    supabase.from('question_stats').select('*').eq('user_id',uid),
+    supabase.from('quiz_attempts').select('*').eq('user_id',uid).order('completed_at',{ascending:false}).limit(200),
+    supabase.from('study_sessions').select('*').eq('user_id',uid).order('started_at',{ascending:false}).limit(200),
+    supabase.from('study_activity').select('question_id,studied_at,mode').eq('user_id',uid).order('studied_at',{ascending:false}).limit(5000),
+    supabase.from('long_form_responses').select('*').eq('user_id',uid).order('created_at',{ascending:false}).limit(500)
+  ]);
+  const err=[settingsR,statsR,attemptsR,sessionsR,activityR,longR].find(r=>r.error)?.error;
+  if(err){setSync('Sync error',true);console.error(err);return}
+  S=base();
+  if(settingsR.data){S.testDate=settingsR.data.test_date||'';S.minStudy=settingsR.data.daily_study_requirement||10;S.dynamicAnswers=settingsR.data.dynamic_answers||{};S.theme=settingsR.data.theme_preference||S.theme||'dark'}
+  for(const x of statsR.data||[])S.stats[x.question_id]={seen:x.seen_count,correct:x.correct_count,wrong:x.wrong_count};
+  S.attempts=(attemptsR.data||[]).map(a=>({id:a.id,date:a.completed_at,correct:a.correct_count,wrong:a.wrong_count,seconds:a.duration_seconds,results:a.results||[]}));
+  S.sessions=(sessionsR.data||[]).map(x=>({id:x.id,kind:x.session_type,started:x.started_at,label:new Date(x.started_at).toLocaleString()}));
+  for(const x of activityR.data||[]){const d=new Intl.DateTimeFormat('en-CA').format(new Date(x.studied_at));S.studiedByDay[d]=S.studiedByDay[d]||[];if(!S.studiedByDay[d].includes(x.question_id))S.studiedByDay[d].push(x.question_id)}
+  S.longFormResponses=(longR.data||[]).map(x=>({id:x.id,questionId:x.question_id,question:(BANK.find(q=>q.id===x.question_id)||{}).question||'',response:x.response_text,acceptedAnswers:answerSet(BANK.find(q=>q.id===x.question_id)||{answers:[]}),date:x.created_at}));
+  setSync('Synced');
+}
+async function persistStat(id){
+  if(!currentUser)return;const x=st(id);
+  const {error}=await supabase.from('question_stats').upsert({user_id:currentUser.id,question_id:id,seen_count:x.seen,correct_count:x.correct,wrong_count:x.wrong,updated_at:new Date().toISOString()},{onConflict:'user_id,question_id'});
+  if(error){console.error(error);setSync('Sync error',true)}
+}
+async function markStudy(id,mode='flashcard'){
+  const d=today();S.studiedByDay[d]=S.studiedByDay[d]||[];
+  const isNew=!S.studiedByDay[d].includes(id);if(isNew)S.studiedByDay[d].push(id);
+  st(id).seen++;
+  if(currentUser){
+    const {error}=await supabase.from('study_activity').insert({user_id:currentUser.id,session_id:currentSessionId,question_id:id,mode});
+    if(error){console.error(error);setSync('Sync error',true)}
+    persistStat(id);
+  }
+}
+function studiedToday(){return (S.studiedByDay[today()]||[]).length}
+async function createSession(kind='practice'){
+  if(!currentUser)return null;
+  const mapped=String(kind).toLowerCase().replace('practice','practice').replace('quiz','quiz').replace('long-form','long_form');
+  const {data,error}=await supabase.from('study_sessions').insert({user_id:currentUser.id,session_type:mapped}).select().single();
+  if(error){console.error(error);setSync('Sync error',true);return null}
+  currentSessionId=data.id;S.sessions.unshift({id:data.id,kind:mapped,started:data.started_at,label:new Date(data.started_at).toLocaleString()});return data;
+}
+function answerSet(q){if(q.dynamic&&S.dynamicAnswers[q.id])return [S.dynamicAnswers[q.id]];return q.answers||[]}
+function scoreText(q,text){
+  if(q.dynamic&&!S.dynamicAnswers[q.id])return {ok:false,score:0,msg:'Set your current answer for this dynamic question in Settings first.'};
+  let n=norm(text);if(!n)return {ok:false,score:0,msg:'No answer entered.'};let matches=[];
+  for(const a of answerSet(q)){let na=norm(a);if(na&&(n.includes(na)||na.includes(n))&&!matches.some(x=>norm(x)===na))matches.push(a)}
+  const ok=matches.length>=q.required;return {ok,score:Math.min(1,matches.length/q.required),msg:ok?'Accepted':'Not enough required answer elements',matches};
+}
+function weakSorted(){return BANK.map(q=>{const x=st(q.id),total=x.correct+x.wrong;return{q,x,rate:total?x.wrong/total:0,total}}).filter(o=>o.total>0).sort((a,b)=>b.rate-a.rate||b.x.wrong-a.x.wrong)}
+function nav(view){document.querySelectorAll('.view').forEach(x=>x.classList.add('hidden'));document.getElementById(view).classList.remove('hidden');document.querySelectorAll('.nav button').forEach(b=>b.classList.toggle('active',b.dataset.view===view));render(view)}
